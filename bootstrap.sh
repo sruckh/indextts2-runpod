@@ -2,6 +2,10 @@
 
 # IndexTTS Runpod Serverless Bootstrap Script
 # This script sets up the environment for IndexTTS serverless on Runpod
+#
+# First boot: clones source, creates venv, installs all Python packages,
+#             downloads model checkpoints (~15-20 min)
+# Subsequent boots: activates existing venv, copies latest handler files (~seconds)
 
 set -e  # Exit on any error
 
@@ -11,6 +15,7 @@ echo "=== IndexTTS Runpod Bootstrap Starting ==="
 INSTALL_DIR="${INSTALL_DIR:-/runpod-volume/indextts}"
 DOCKER_SRC="/opt/index-tts"
 SRC_DIR="${SRC_DIR:-$INSTALL_DIR/src}"
+VENV_DIR="${VENV_DIR:-$INSTALL_DIR/venv}"
 AUDIO_VOICES_DIR="${AUDIO_VOICES_DIR:-$INSTALL_DIR/audio_voices}"
 OUTPUT_AUDIO_DIR="${OUTPUT_AUDIO_DIR:-$INSTALL_DIR/output_audio}"
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-$INSTALL_DIR/checkpoints}"
@@ -28,6 +33,7 @@ exec 2>&1
 echo "Log file: $LOG_FILE"
 echo "Install directory: $INSTALL_DIR"
 echo "Source directory: $SRC_DIR"
+echo "Venv directory: $VENV_DIR"
 echo "Docker source: $DOCKER_SRC"
 echo "Checkpoints directory: $CHECKPOINTS_DIR"
 
@@ -56,18 +62,55 @@ cp "$DOCKER_SRC/handler.py" "$SRC_DIR/"
 cp "$DOCKER_SRC/config.py" "$SRC_DIR/"
 cp "$DOCKER_SRC/serverless_engine.py" "$SRC_DIR/"
 
+# Create Python virtual environment and install dependencies (first time only)
+if [ ! -d "$VENV_DIR/bin/activate" ]; then
+    log "=== First-time setup: creating virtual environment ==="
+    python -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+
+    log "Installing uv package manager..."
+    pip install --no-cache-dir uv
+
+    log "Installing PyTorch (CUDA 12.8)..."
+    uv pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+        --index-url https://download.pytorch.org/whl/cu128 || \
+        pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+            --index-url https://download.pytorch.org/whl/cu128
+
+    log "Installing flash-attention..."
+    pip install --no-cache-dir \
+        https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+
+    log "Installing IndexTTS and dependencies..."
+    (cd "$SRC_DIR" && uv pip install -e .) || \
+        (cd "$SRC_DIR" && pip install --no-cache-dir -e . && pip install --no-cache-dir \
+        numpy safetensors einops huggingface-hub modelscope \
+        pyyaml tqdm transformers accelerate)
+
+    log "Installing RunPod and serverless dependencies..."
+    pip install --no-cache-dir \
+        runpod==1.6.1 \
+        "uvicorn[standard]" \
+        pydantic \
+        python-multipart \
+        tqdm \
+        boto3
+
+    log "Installing HuggingFace CLI..."
+    pip install --no-cache-dir "huggingface-hub[cli,hf_xet]"
+
+    log "=== Virtual environment setup complete ==="
+else
+    log "Activating existing virtual environment at $VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+fi
+
 # Make sure the source is importable
 export PYTHONPATH="$SRC_DIR:$PYTHONPATH"
 
 # Check if checkpoints exist, if not download them
 if [ ! -f "$CHECKPOINTS_DIR/config.yaml" ]; then
     log "Checkpoints not found. Downloading models..."
-
-    # Install huggingface-hub if needed
-    if ! command -v hf &> /dev/null; then
-        log "Installing HuggingFace CLI..."
-        pip install --no-cache-dir "huggingface-hub[cli,hf_xet]"
-    fi
 
     # Download models using hf CLI
     log "Downloading IndexTTS-2 models from HuggingFace..."

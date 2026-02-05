@@ -15,8 +15,8 @@ IndexTTS RunPod Serverless is a cloud-based Text-to-Speech API worker that runs 
 | `handler.py` | RunPod serverless entry point - validates requests, manages S3 uploads, health checks |
 | `config.py` | Centralized configuration with environment variables and validation |
 | `serverless_engine.py` | Inference wrapper with lazy model loading, text chunking, and crossfade |
-| `bootstrap.sh` | Container initialization - creates directories, downloads models from HuggingFace |
-| `Dockerfile` | Multi-stage CUDA 12.8 build with IndexTTS installed from GitHub |
+| `bootstrap.sh` | Container initialization - one-time venv/source/model setup on network volume |
+| `Dockerfile` | Lean CUDA 12.8 image with system deps only; Python packages installed by bootstrap |
 
 ### Request Flow
 
@@ -88,6 +88,8 @@ audio, sr = engine.generate_speech(
 
 ```
 /runpod-volume/indextts/
+├── src/                   # IndexTTS git clone + handler files (copied from Docker image)
+├── venv/                  # Python virtual environment (torch, flash-attn, indextts, etc.)
 ├── audio_voices/          # Reference audio for voice cloning (my_voice.wav, etc.)
 ├── output_audio/          # Generated audio (temporary, auto-cleanup)
 ├── checkpoints/           # Model files downloaded from HuggingFace
@@ -99,9 +101,10 @@ audio, sr = engine.generate_speech(
 
 ## Model Source
 
-IndexTTS is installed from the upstream GitHub repo during Docker build:
+IndexTTS source is cloned to the network volume on first boot by bootstrap.sh:
 - Repo: `https://github.com/index-tts/index-tts.git`
-- Branch: `main` (configurable via `INDEXTTS_REF` build arg)
+- Branch: `main` (configurable via `INDEXTTS_REF` env var)
+- Python packages (torch, flash-attn, indextts, runpod) installed into venv on network volume
 - Models downloaded from: `IndexTeam/IndexTTS-2` on HuggingFace
 
 ## API Reference
