@@ -1,0 +1,54 @@
+%% IndexTTS2 Request Flow
+%% Scope: /opt/docker/indexTTS2
+%% Date: 2026-02-05
+
+flowchart TB
+    App["Client App"]
+    API["RunPod API"]
+    Queue["Queue"]
+    Handler["handler.py"]
+    Config["config.py"]
+    Engine["engine.py"]
+    Model["IndexTTS2"]
+    Chunk["chunk_text"]
+    Cross["crossfade"]
+    Encode["encode_to_opus"]
+    Upload["upload_to_s3"]
+    S3["S3 Storage"]
+    Voices["Voice Files"]
+
+    App -->|"1. POST"| API
+    API -->|"2. Queue"| Queue
+    Queue -->|"3. Process"| Handler
+    Handler -->|"4. Config"| Config
+    Config -->|"5. Settings"| Handler
+    Handler -->|"6. Generate"| Engine
+    Engine -->|"7. Load"| Model
+    Engine -->|"8. Voice"| Voices
+    Engine -->|"9. Chunk?"| Chunk
+    Chunk -->|"10. Process"| Model
+    Model -->|"11. Audio"| Engine
+    Engine -->|"12. Merge?"| Cross
+    Cross -->|"13. Merged"| Engine
+    Engine -->|"14. Tensor"| Handler
+    Handler -->|"15. Encode"| Encode
+    Encode -->|"16. OGG"| Handler
+    Handler -->|"17. Upload"| Upload
+    Upload -->|"18. Store"| S3
+    S3 -->|"19. URL"| Upload
+    Upload -->|"20. Return"| Handler
+    Handler -->|"21. Result"| Queue
+    Queue -->|"22. Response"| API
+    API -->|"23. JSON"| App
+
+    classDef appStyle fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef apiStyle fill:#ECECFF,stroke:#9370DB,stroke-width:2px
+    classDef workerStyle fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef engineStyle fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef storageStyle fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+
+    class App appStyle
+    class API,Queue apiStyle
+    class Handler,Config,Encode,Upload workerStyle
+    class Engine,Model,Chunk,Cross engineStyle
+    class S3,Voices storageStyle

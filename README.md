@@ -43,17 +43,34 @@ IndexTTS2 is an autoregressive TTS model with:
 - **GPT Integration**: Uses GPT latent representations for emotional expressiveness
 - **Multi-modal Input**: Supports speaker audio, emotion audio, emotion vectors, and text descriptions
 
-### Data Flow
+### Request Flow
 
-![Data Flow Diagram](docs/diagrams/data-flow.svg)
+![Request Flow Diagram](docs/diagrams/request-flow.svg)
 
-The diagram above illustrates the complete request lifecycle:
-1. **Request** → Client sends request via RunPod API
-2. **Validation** → `handler.py` validates and extracts parameters
-3. **Inference** → `serverless_engine.py` processes text through IndexTTS2
-4. **Encoding** → Audio is encoded to Opus/OGG format
-5. **Upload** → Result is uploaded to S3 with presigned URL
-6. **Response** → Client receives JSON with URL and metadata
+The diagram above illustrates the complete request lifecycle through numbered steps:
+1. **Client POST** → Application sends HTTP POST to RunPod API
+2. **Queue Job** → RunPod queues the request for processing
+3. **Process** → Worker dequeues and processes the request
+4. **Config** → Handler retrieves configuration settings
+5. **Settings** → Config returns validated settings
+6. **Generate** → Handler requests audio generation
+7. **Load Model** → Engine loads IndexTTS2 model
+8. **Voice** → Engine retrieves voice reference files
+9. **Chunk?** → Engine checks if text needs chunking
+10. **Process** → Chunks are processed through model
+11. **Audio** → Model returns raw audio
+12. **Merge?** → Engine checks if chunks need merging
+13. **Merged** → Crossfade merges audio chunks
+14. **Tensor** → Engine returns audio tensor
+15. **Encode** → Handler encodes to Opus/OGG
+16. **OGG** → Encoder returns encoded audio
+17. **Upload** → Handler uploads to S3
+18. **Store** → S3 stores the audio file
+19. **URL** → S3 returns presigned URL
+20. **Return** → Upload returns URL to handler
+21. **Result** → Handler returns job result
+22. **Response** → Queue responds to API
+23. **JSON** → Client receives final response
 
 ## 🚀 Quick Start
 
