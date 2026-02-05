@@ -18,16 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /opt
 
-# Install IndexTTS from the official repository
-# We clone and install the package so we can import indextts module
-ARG INDEXTTS_REPO="https://github.com/index-tts/index-tts.git"
+# Download IndexTTS source via tarball (avoids git dependency during build)
+# Full git clone happens at runtime in bootstrap.sh on the network volume
+ARG INDEXTTS_REPO="https://github.com/index-tts/index-tts"
 ARG INDEXTTS_REF="main"
 
-# Clone and install IndexTTS dependencies
-RUN git clone "$INDEXTTS_REPO" /opt/index-tts \
-    && cd /opt/index-tts \
-    && git checkout "$INDEXTTS_REF" \
-    && git lfs pull
+RUN curl -fsSL "$INDEXTTS_REPO/archive/$INDEXTTS_REF.tar.gz" | tar xz -C /opt \
+    && mv /opt/index-tts-$INDEXTTS_REF /opt/index-tts
 
 # Install uv package manager for faster installs
 RUN pip install --no-cache-dir uv
