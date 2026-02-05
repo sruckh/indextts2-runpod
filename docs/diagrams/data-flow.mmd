@@ -1,0 +1,127 @@
+%% IndexTTS2 RunPod Serverless Data Flow
+%% Scope: /opt/docker/indexTTS2
+%% Date: 2025-02-05
+
+flowchart TD
+    subgraph External["External Systems"]
+        Client["Client Application"]
+        S3["S3 Storage"]
+        HF["HuggingFace"]
+    end
+
+    subgraph RunPod["RunPod Serverless"]
+        API["RunPod API"]
+        Queue["Request Queue"]
+    end
+
+    subgraph Worker["IndexTTS Worker"]
+        subgraph InputProcessing["Input Processing"]
+            Handler["handler.py"]
+            Validator["extract_and_validate_params"]
+            HealthCheck["health_check"]
+        end
+
+        subgraph ConfigLayer["Configuration Layer"]
+            Config["config.py"]
+            EnvVars["Environment Variables"]
+        end
+
+        subgraph InferenceEngine["Inference Engine"]
+            Engine["serverless_engine.py"]
+            IndexTTS2["IndexTTS2 Model"]
+            Chunking["chunk_text"]
+            Crossfade["crossfade_chunks"]
+        end
+
+        subgraph AudioProcessing["Audio Processing"]
+            Encoder["encode_to_opus"]
+            FFmpeg["ffmpeg"]
+        end
+
+        subgraph OutputLayer["Output Layer"]
+            Uploader["upload_to_s3"]
+            S3Client["S3 Client"]
+        end
+    end
+
+    subgraph Storage["Local Storage"]
+        VoicesDir["AUDIO_VOICES_DIR"]
+        OutputDir["OUTPUT_AUDIO_DIR"]
+        CheckpointsDir["CHECKPOINTS_DIR"]
+    end
+
+    %% Primary Request Flow
+    Client -->|HTTP POST| API
+    API -->|Queue Job| Queue
+    Queue -->|Process Job| Handler
+
+    %% Configuration Flow
+    EnvVars -->|Load Settings| Config
+    Config -->|Provide Config| Handler
+    Config -->|Provide Paths| Engine
+
+    %% Health Check Flow
+    Client -.->|Health Check| API
+    API -.->|Health Check| Handler
+    Handler -.->|Check Status| HealthCheck
+    HealthCheck -.->|Status| Handler
+    Handler -.->|Health Response| API
+    API -.->|Health Response| Client
+
+    %% Validation Flow
+    Handler -->|Extract Params| Validator
+    Validator -->|Validate| Config
+    Config -->|Return Settings| Validator
+    Validator -->|Validated Params| Handler
+
+    %% Model Loading Flow
+    Engine -->|Check Loaded| IndexTTS2
+    HF -->|Download Model| CheckpointsDir
+    CheckpointsDir -->|Load Weights| IndexTTS2
+
+    %% Inference Flow
+    Handler -->|Request Generation| Engine
+    Engine -->|Load Model| IndexTTS2
+    Engine -->|Resolve Voice| VoicesDir
+    Engine -->|Long Text| Chunking
+    Chunking -->|Process Chunks| IndexTTS2
+    IndexTTS2 -->|Raw Audio| Engine
+    Engine -->|Multiple Chunks| Crossfade
+    Engine -->|Audio Tensor| Handler
+
+    %% Audio Encoding Flow
+    Handler -->|Encode Audio| Encoder
+    Encoder -->|WAV Input| FFmpeg
+    FFmpeg -->|OGG Opus| Encoder
+    Encoder -->|Audio Bytes| Handler
+
+    %% S3 Upload Flow
+    Handler -->|Upload| Uploader
+    Uploader -->|Get Client| S3Client
+    S3Client -->|Connect| S3
+    Uploader -->|Upload Bytes| S3
+    S3 -->|Presigned URL| Uploader
+    Uploader -->|Return URL| Handler
+
+    %% Response Flow
+    Handler -->|Job Result| Queue
+    Queue -->|Response| API
+    API -->|JSON Response| Client
+
+    %% Cleanup Flow
+    Handler -->|Cleanup Old Files| OutputDir
+
+    %% Styling
+    classDef external fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef handler fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef config fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef engine fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef audio fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef storage fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+
+    class Client,S3,HF external
+    class Handler,Validator,HealthCheck handler
+    class Config,EnvVars config
+    class Engine,IndexTTS2,Chunking,Crossfade engine
+    class Encoder,FFmpeg,Uploader,S3Client audio
+    class VoicesDir,OutputDir,CheckpointsDir storage
