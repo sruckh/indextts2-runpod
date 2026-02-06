@@ -87,7 +87,7 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
     log "Installing IndexTTS runtime dependencies..."
     pip install --no-cache-dir \
         numpy safetensors einops huggingface-hub modelscope \
-        pyyaml tqdm "transformers>=4.46,<5" accelerate \
+        pyyaml tqdm "transformers==4.46.3" accelerate \
         "numba>=0.59" "llvmlite>=0.42" \
         librosa soundfile pysoundfile \
         whisper-timestamped omegaconf
@@ -114,7 +114,7 @@ else
     pip install --no-cache-dir -q \
         omegaconf \
         "numba>=0.59" "llvmlite>=0.42" \
-        "transformers>=4.46,<5" \
+        "transformers==4.46.3" \
         whisper-timestamped 2>/dev/null || true
 fi
 
