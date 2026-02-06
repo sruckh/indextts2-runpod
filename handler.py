@@ -333,7 +333,7 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
     crossfade_ms = job_input.get("crossfade_ms", 140)
     stream = job_input.get("stream", False)
     output_format = job_input.get("output_format", "pcm_16")
-    stream_max_chars_per_chunk = job_input.get("stream_max_chars_per_chunk")
+    stream_max_chars_per_chunk = job_input.get("stream_max_chars_per_chunk", 150 if stream else None)
     stream_crossfade_ms = job_input.get("stream_crossfade_ms")
 
     # Validate speaker_voice if provided
