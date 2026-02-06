@@ -47,8 +47,8 @@ CHECKPOINTS_DIR = Path(os.environ.get("CHECKPOINTS_DIR", f"{INDEXTTS_DIR}/checkp
 
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".ogg", ".flac", ".webm", ".aac", ".opus"}
 
-# Default output sample rate (IndexTTS outputs at 24kHz)
-DEFAULT_SAMPLE_RATE = 24000
+# Fallback sample rate (actual rate is read from model output at runtime)
+DEFAULT_SAMPLE_RATE = 22050
 
 # =============================================================================
 # Model Configuration

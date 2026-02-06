@@ -286,21 +286,26 @@ class IndexTTSInference:
                     )
 
                     # Load the generated audio
-                    audio_tensor, sample_rate = torchaudio.load(tmp_path)
+                    audio_tensor, sr = torchaudio.load(tmp_path)
                     audio_chunks.append(audio_tensor.to(self.device))
+                    actual_sample_rate = sr  # capture model's actual sample rate
 
                 finally:
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
 
+            # Use the actual sample rate from the model output
+            sr = actual_sample_rate if audio_chunks else config.DEFAULT_SAMPLE_RATE
+            log.info(f"Model output sample rate: {sr}")
+
             # Combine chunks with crossfade
             if enable_crossfade and len(audio_chunks) > 1:
                 log.info(f"Applying crossfade ({crossfade_ms}ms)")
-                combined = crossfade_chunks(audio_chunks, crossfade_ms=crossfade_ms, sample_rate=config.DEFAULT_SAMPLE_RATE)
+                combined = crossfade_chunks(audio_chunks, crossfade_ms=crossfade_ms, sample_rate=sr)
             else:
                 combined = torch.cat(audio_chunks, dim=-1)
 
-            return combined, config.DEFAULT_SAMPLE_RATE
+            return combined, sr
 
         else:
             # Single chunk generation
