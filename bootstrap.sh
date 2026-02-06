@@ -49,8 +49,7 @@ mkdir -p "$AUDIO_VOICES_DIR" "$OUTPUT_AUDIO_DIR" "$CHECKPOINTS_DIR"
 # Clone IndexTTS source to network volume (first time only)
 if [ ! -d "$SRC_DIR/.git" ]; then
     log "Cloning IndexTTS source to $SRC_DIR..."
-    git clone --depth 1 --branch "$INDEXTTS_REF" "$INDEXTTS_REPO" "$SRC_DIR"
-    (cd "$SRC_DIR" && git lfs pull)
+    GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --branch "$INDEXTTS_REF" "$INDEXTTS_REPO" "$SRC_DIR"
     log "IndexTTS source cloned successfully"
 else
     log "IndexTTS source already exists at $SRC_DIR"
@@ -70,6 +69,7 @@ if [ ! -d "$VENV_DIR/bin/activate" ]; then
 
     log "Installing uv package manager..."
     pip install --no-cache-dir uv
+    export UV_LINK_MODE=copy
 
     log "Installing PyTorch (CUDA 12.8)..."
     uv pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
@@ -81,11 +81,16 @@ if [ ! -d "$VENV_DIR/bin/activate" ]; then
     pip install --no-cache-dir \
         https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 
-    log "Installing IndexTTS and dependencies..."
-    (cd "$SRC_DIR" && uv pip install -e .) || \
-        (cd "$SRC_DIR" && pip install --no-cache-dir -e . && pip install --no-cache-dir \
+    log "Installing IndexTTS (--no-deps, pins are incompatible with Python 3.12)..."
+    (cd "$SRC_DIR" && pip install --no-cache-dir --no-deps -e .)
+
+    log "Installing IndexTTS runtime dependencies..."
+    pip install --no-cache-dir \
         numpy safetensors einops huggingface-hub modelscope \
-        pyyaml tqdm transformers accelerate)
+        pyyaml tqdm transformers accelerate \
+        "numba>=0.59" "llvmlite>=0.42" \
+        librosa soundfile pysoundfile \
+        whisper-timestamped
 
     log "Installing RunPod and serverless dependencies..."
     pip install --no-cache-dir \
