@@ -522,8 +522,8 @@ def handler(job: Dict):
     Args:
         job: RunPod job dictionary with 'input' key
 
-    Yields:
-        Result dictionary(es)
+    Returns:
+        Result dictionary
     """
     job_id = job.get('id')
     input_data = job.get('input', {})
@@ -532,14 +532,13 @@ def handler(job: Dict):
 
     # Handle health check
     if input_data.get("action") == "health_check":
-        yield health_check()
-        return
+        return health_check()
 
     # Batch mode - generate and upload
     log.info(f"[{job_id}] Batch mode - input keys: {list(input_data.keys())}")
     result = handler_batch(input_data)
     log.info(f"[{job_id}] Batch mode result status: {result.get('status', result.get('error', 'unknown'))}")
-    yield result
+    return result
 
 
 # =============================================================================
