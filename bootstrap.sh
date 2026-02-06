@@ -86,11 +86,32 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
 
     log "Installing IndexTTS runtime dependencies..."
     pip install --no-cache-dir \
-        numpy safetensors einops huggingface-hub modelscope \
-        pyyaml tqdm "transformers==4.46.3" accelerate \
+        "accelerate==1.8.1" \
+        "cn2an==0.5.22" \
+        "descript-audiotools==0.7.2" \
+        "einops>=0.8.1" \
+        "ffmpeg-python==0.2.0" \
+        "g2p-en==2.1.0" \
+        "jieba==0.42.1" \
+        "json5==0.10.0" \
+        "librosa==0.10.2.post1" \
+        "matplotlib==3.8.2" \
+        "modelscope==1.27.0" \
+        "munch==4.0.0" \
         "numba>=0.59" "llvmlite>=0.42" \
-        librosa soundfile pysoundfile \
-        whisper-timestamped omegaconf json5
+        "numpy==1.26.2" \
+        "omegaconf>=2.3.0" \
+        "pandas==2.3.2" \
+        "safetensors==0.5.2" \
+        "sentencepiece>=0.2.1" \
+        "textstat>=0.7.10" \
+        "tokenizers==0.21.0" \
+        "tqdm>=4.67.1" \
+        "transformers==4.52.1" \
+        "WeTextProcessing" \
+        huggingface-hub pyyaml \
+        soundfile pysoundfile \
+        whisper-timestamped
 
     log "Installing RunPod and serverless dependencies..."
     pip install --no-cache-dir \
@@ -112,10 +133,14 @@ else
     # Patch: ensure any newly added deps are installed (fast no-op if already present)
     log "Checking for missing dependencies..."
     pip install --no-cache-dir -q \
-        omegaconf \
+        omegaconf json5 sentencepiece \
         "numba>=0.59" "llvmlite>=0.42" \
-        "transformers==4.46.3" \
-        whisper-timestamped json5 2>/dev/null || true
+        "transformers==4.52.1" \
+        "cn2an==0.5.22" "g2p-en==2.1.0" "jieba==0.42.1" \
+        "munch==4.0.0" "textstat>=0.7.10" \
+        "ffmpeg-python==0.2.0" "descript-audiotools==0.7.2" \
+        "WeTextProcessing" \
+        whisper-timestamped 2>/dev/null || true
 fi
 
 # Make sure the source is importable
