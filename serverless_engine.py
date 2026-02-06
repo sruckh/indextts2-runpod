@@ -347,6 +347,7 @@ class IndexTTSInference:
         max_chars_per_chunk: int = 300,
         enable_crossfade: bool = True,
         crossfade_ms: int = 140,
+        chunk_pause_ms: int = 300,
     ) -> Generator[Dict[str, Any], None, None]:
         """Generate streaming audio chunks as base64-encoded signed int16 PCM.
 
@@ -432,6 +433,7 @@ class IndexTTSInference:
                         if crossfade_ms and enable_crossfade
                         else 0
                     )
+                    pause_samples = int(output_sample_rate * (float(chunk_pause_ms) / 1000.0)) if chunk_pause_ms > 0 else 0
                     log.info(f"Model output sample rate: {output_sample_rate}")
                 elif sr != output_sample_rate:
                     chunk_tensor = torchaudio.functional.resample(chunk_tensor.unsqueeze(0), sr, output_sample_rate).squeeze(0)
@@ -460,6 +462,11 @@ class IndexTTSInference:
                     audio_to_emit = audio_to_emit[:-crossfade_samples]
                 else:
                     crossfade_tail = None
+
+                # Append silence gap after non-last chunks for natural pacing
+                if not is_last_chunk and pause_samples > 0:
+                    silence = torch.zeros(pause_samples, device=audio_to_emit.device, dtype=audio_to_emit.dtype)
+                    audio_to_emit = torch.cat([audio_to_emit, silence], dim=-1)
 
                 # Yield this chunk's audio immediately
                 if audio_to_emit is not None and len(audio_to_emit) > 0:
