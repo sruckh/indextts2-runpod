@@ -330,12 +330,11 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
     enable_chunking = job_input.get("enable_chunking", True)
     max_chars_per_chunk = job_input.get("max_chars_per_chunk", 300)
     enable_crossfade = job_input.get("enable_crossfade", True)
-    crossfade_ms = job_input.get("crossfade_ms", 100)
+    crossfade_ms = job_input.get("crossfade_ms", 140)
     stream = job_input.get("stream", False)
     output_format = job_input.get("output_format", "pcm_16")
     stream_max_chars_per_chunk = job_input.get("stream_max_chars_per_chunk")
     stream_crossfade_ms = job_input.get("stream_crossfade_ms")
-    stream_tail_ms = job_input.get("stream_tail_ms", 0)
 
     # Validate speaker_voice if provided
     if speaker_voice:
@@ -420,9 +419,6 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
         if not isinstance(stream_crossfade_ms, int) or stream_crossfade_ms < 0 or stream_crossfade_ms > 2000:
             return None, {"error": "stream_crossfade_ms must be an integer between 0 and 2000"}
 
-    if not isinstance(stream_tail_ms, int) or stream_tail_ms < 0 or stream_tail_ms > 5000:
-        return None, {"error": "stream_tail_ms must be an integer between 0 and 5000"}
-
     if output_format != "pcm_16":
         return None, {"error": "Invalid output_format. Only 'pcm_16' is currently supported"}
 
@@ -443,7 +439,6 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
         "output_format": output_format,
         "stream_max_chars_per_chunk": stream_max_chars_per_chunk,
         "stream_crossfade_ms": stream_crossfade_ms,
-        "stream_tail_ms": stream_tail_ms,
     }
 
     return params, None
@@ -587,7 +582,6 @@ def handler_stream(job_input: Dict) -> Generator[Dict, None, None]:
             max_chars_per_chunk=params["stream_max_chars_per_chunk"] or params["max_chars_per_chunk"],
             enable_crossfade=params["enable_crossfade"],
             crossfade_ms=params["stream_crossfade_ms"] if params["stream_crossfade_ms"] is not None else params["crossfade_ms"],
-            stream_tail_ms=params["stream_tail_ms"],
         )
     except Exception as e:
         error_trace = traceback.format_exc()

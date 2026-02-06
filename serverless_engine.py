@@ -217,7 +217,7 @@ class IndexTTSInference:
         enable_chunking: bool = True,
         max_chars_per_chunk: int = 300,
         enable_crossfade: bool = True,
-        crossfade_ms: int = 100,
+        crossfade_ms: int = 140,
     ) -> Tuple[torch.Tensor, int]:
         """
         Generate speech from text with optional voice cloning and emotion control.
@@ -346,10 +346,17 @@ class IndexTTSInference:
         use_random: bool = False,
         max_chars_per_chunk: int = 300,
         enable_crossfade: bool = True,
-        crossfade_ms: int = 100,
-        stream_tail_ms: int = 0,
+        crossfade_ms: int = 140,
     ) -> Generator[Dict[str, Any], None, None]:
-        """Generate streaming audio chunks as base64-encoded signed int16 PCM."""
+        """Generate streaming audio chunks as base64-encoded signed int16 PCM.
+
+        Each text chunk is synthesized and yielded immediately so the client
+        receives audio as soon as the first chunk finishes inference, rather
+        than waiting for all chunks to complete.
+
+        When crossfade is enabled, only the last `crossfade_ms` of each chunk
+        is held back and blended with the start of the next chunk.
+        """
         import base64
         import traceback
 
@@ -371,10 +378,20 @@ class IndexTTSInference:
                 return
 
             output_sample_rate = None
-            buffer_audio = None
-            chunk_num = 0
-            tail_samples = 0
             crossfade_samples = 0
+            # Only holds the trailing crossfade overlap from the previous chunk
+            crossfade_tail = None
+            chunk_num = 0
+
+            def _to_int16_bytes(tensor):
+                """Convert float tensor to base64-encoded int16 PCM."""
+                arr = tensor.detach().cpu().numpy()
+                if arr.dtype == np.float32 or arr.dtype == np.float64:
+                    arr = np.clip(arr, -1.0, 1.0)
+                    arr = (arr * 32767).astype(np.int16)
+                else:
+                    arr = arr.astype(np.int16)
+                return base64.b64encode(arr.tobytes()).decode("utf-8")
 
             for i, chunk_text_content in enumerate(chunks):
                 log.info(f"Streaming chunk {i + 1}/{len(chunks)}")
@@ -410,7 +427,6 @@ class IndexTTSInference:
 
                 if output_sample_rate is None:
                     output_sample_rate = sr
-                    tail_samples = int(output_sample_rate * (float(stream_tail_ms) / 1000.0)) if stream_tail_ms else 0
                     crossfade_samples = (
                         int(output_sample_rate * (float(crossfade_ms) / 1000.0))
                         if crossfade_ms and enable_crossfade
@@ -420,59 +436,50 @@ class IndexTTSInference:
                 elif sr != output_sample_rate:
                     chunk_tensor = torchaudio.functional.resample(chunk_tensor.unsqueeze(0), sr, output_sample_rate).squeeze(0)
 
-                if buffer_audio is None:
-                    merged = chunk_tensor
-                else:
+                is_last_chunk = (i == len(chunks) - 1)
+
+                # Blend crossfade tail from previous chunk with start of this chunk
+                if crossfade_tail is not None:
                     if crossfade_samples > 0:
-                        cf = min(crossfade_samples, len(buffer_audio), len(chunk_tensor))
+                        cf = min(crossfade_samples, len(crossfade_tail), len(chunk_tensor))
                         if cf > 0:
                             fade_out = torch.linspace(1.0, 0.0, cf, device=chunk_tensor.device, dtype=chunk_tensor.dtype)
                             fade_in = 1.0 - fade_out
-                            blended = buffer_audio[-cf:] * fade_out + chunk_tensor[:cf] * fade_in
-                            merged = torch.cat([buffer_audio[:-cf], blended, chunk_tensor[cf:]], dim=-1)
+                            blended = crossfade_tail * fade_out + chunk_tensor[:cf] * fade_in
+                            audio_to_emit = torch.cat([blended, chunk_tensor[cf:]], dim=-1)
                         else:
-                            merged = torch.cat([buffer_audio, chunk_tensor], dim=-1)
+                            audio_to_emit = torch.cat([crossfade_tail, chunk_tensor], dim=-1)
                     else:
-                        merged = torch.cat([buffer_audio, chunk_tensor], dim=-1)
-
-                if tail_samples > 0 and len(merged) > tail_samples:
-                    emit_tensor = merged[:-tail_samples]
-                    buffer_audio = merged[-tail_samples:]
+                        audio_to_emit = torch.cat([crossfade_tail, chunk_tensor], dim=-1)
                 else:
-                    emit_tensor = None
-                    buffer_audio = merged
+                    audio_to_emit = chunk_tensor
 
-                if emit_tensor is not None and len(emit_tensor) > 0:
-                    audio_array = emit_tensor.detach().cpu().numpy()
-                    if audio_array.dtype == np.float32 or audio_array.dtype == np.float64:
-                        audio_int16 = np.clip(audio_array, -1.0, 1.0)
-                        audio_int16 = (audio_int16 * 32767).astype(np.int16)
-                    else:
-                        audio_int16 = audio_array.astype(np.int16)
+                # Hold back crossfade overlap for next chunk (unless last chunk)
+                if crossfade_samples > 0 and not is_last_chunk and len(audio_to_emit) > crossfade_samples:
+                    crossfade_tail = audio_to_emit[-crossfade_samples:]
+                    audio_to_emit = audio_to_emit[:-crossfade_samples]
+                else:
+                    crossfade_tail = None
 
+                # Yield this chunk's audio immediately
+                if audio_to_emit is not None and len(audio_to_emit) > 0:
                     chunk_num += 1
                     yield {
                         "status": "streaming",
                         "chunk": chunk_num,
                         "format": "pcm_16",
-                        "audio_chunk": base64.b64encode(audio_int16.tobytes()).decode("utf-8"),
+                        "audio_chunk": _to_int16_bytes(audio_to_emit),
                         "sample_rate": output_sample_rate,
                     }
 
-            if buffer_audio is not None and len(buffer_audio) > 0:
-                audio_array = buffer_audio.detach().cpu().numpy()
-                if audio_array.dtype == np.float32 or audio_array.dtype == np.float64:
-                    audio_int16 = np.clip(audio_array, -1.0, 1.0)
-                    audio_int16 = (audio_int16 * 32767).astype(np.int16)
-                else:
-                    audio_int16 = audio_array.astype(np.int16)
-
+            # Flush any remaining crossfade tail
+            if crossfade_tail is not None and len(crossfade_tail) > 0:
                 chunk_num += 1
                 yield {
                     "status": "streaming",
                     "chunk": chunk_num,
                     "format": "pcm_16",
-                    "audio_chunk": base64.b64encode(audio_int16.tobytes()).decode("utf-8"),
+                    "audio_chunk": _to_int16_bytes(crossfade_tail),
                     "sample_rate": output_sample_rate or config.DEFAULT_SAMPLE_RATE,
                 }
 
