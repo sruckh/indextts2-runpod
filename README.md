@@ -22,6 +22,7 @@ This repository provides a **RunPod serverless inference worker** that:
 - **🎭 Emotion Control**: Control emotions via reference audio, emotion vectors, or text descriptions
 - **🔬 High Quality**: State-of-the-art speech synthesis with natural prosody
 - **⚡ Optimized**: FP16 support, chunking for long texts, crossfade for smooth transitions
+- **📡 Stream Mode**: Optional chunked PCM streaming via RunPod generator handler
 - **☁️ Serverless**: RunPod queue-based worker, S3 uploads, persistent voice directory
 - **🔧 Flexible**: Configurable generation parameters and chunking options
 
@@ -145,6 +146,11 @@ docker build -t indextts-runpod .
 | `max_chars_per_chunk` | int | Max characters per chunk (50-1000) | 300 |
 | `enable_crossfade` | bool | Apply crossfade between chunks | true |
 | `crossfade_ms` | int | Crossfade duration in ms | 100 |
+| `stream` | bool | Enable streaming mode (base64 `pcm_16` chunks) | false |
+| `output_format` | str | Streaming format (currently only `pcm_16`) | `pcm_16` |
+| `stream_max_chars_per_chunk` | int | Override stream chunk text size | uses `max_chars_per_chunk` |
+| `stream_crossfade_ms` | int | Override stream crossfade duration in ms | uses `crossfade_ms` |
+| `stream_tail_ms` | int | Keep a buffered tail before each streamed emit | 0 |
 | `session_id` | str | Custom session ID for filename | UUID |
 
 ### Response Format
@@ -165,6 +171,27 @@ docker build -t indextts-runpod .
     "emo_alpha": 0.8
   }
 }
+```
+
+### Streaming Response Format
+
+When `stream=true`, the handler yields multiple chunks (RunPod aggregated stream output):
+
+```json
+[
+  {
+    "status": "streaming",
+    "chunk": 1,
+    "format": "pcm_16",
+    "audio_chunk": "BASE64_INT16_PCM...",
+    "sample_rate": 22050
+  },
+  {
+    "status": "complete",
+    "format": "pcm_16",
+    "total_chunks": 5
+  }
+]
 ```
 
 ### Example API Calls
@@ -230,6 +257,24 @@ curl -X POST "https://api.runpod.ai/v2/${ENDPOINT_ID}/runsync" \
       "max_chars_per_chunk": 250,
       "enable_crossfade": true,
       "crossfade_ms": 150
+    }
+  }'
+```
+
+#### Streaming Mode (PCM Chunks)
+
+```bash
+curl -X POST "https://api.runpod.ai/v2/${ENDPOINT_ID}/runsync" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+  -d '{
+    "input": {
+      "text": "This response is streamed in chunks.",
+      "speaker_voice": "my_voice.wav",
+      "stream": true,
+      "output_format": "pcm_16",
+      "stream_max_chars_per_chunk": 220,
+      "stream_crossfade_ms": 80
     }
   }'
 ```

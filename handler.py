@@ -20,6 +20,11 @@ Accepts:
 - max_chars_per_chunk (int, optional): max chars per chunk (default: 300)
 - enable_crossfade (bool, optional): apply crossfade between chunks (default: true)
 - crossfade_ms (int, optional): crossfade duration in ms (default: 100)
+- stream (bool, optional): enable streaming mode (default: false)
+- output_format (str, optional): streaming output format, supports "pcm_16" only
+- stream_max_chars_per_chunk (int, optional): optional streaming chunk size override
+- stream_crossfade_ms (int, optional): optional streaming crossfade override
+- stream_tail_ms (int, optional): optional streaming output tail buffer in ms
 
 Returns:
 {
@@ -29,17 +34,30 @@ Returns:
     "s3_key": str,
     "metadata": {...}
 }
+
+Streaming mode yields:
+{
+    "status": "streaming",
+    "chunk": int,
+    "format": "pcm_16",
+    "audio_chunk": str,  # base64-encoded signed int16 PCM bytes
+    "sample_rate": int
+}
+{
+    "status": "complete",
+    "format": "pcm_16",
+    "total_chunks": int
+}
 """
 
 import os
 import sys
 import argparse
-import base64
 import subprocess
 import tempfile
 import time
 import traceback
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Generator
 from uuid import uuid4
 
 import runpod
@@ -313,6 +331,11 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
     max_chars_per_chunk = job_input.get("max_chars_per_chunk", 300)
     enable_crossfade = job_input.get("enable_crossfade", True)
     crossfade_ms = job_input.get("crossfade_ms", 100)
+    stream = job_input.get("stream", False)
+    output_format = job_input.get("output_format", "pcm_16")
+    stream_max_chars_per_chunk = job_input.get("stream_max_chars_per_chunk")
+    stream_crossfade_ms = job_input.get("stream_crossfade_ms")
+    stream_tail_ms = job_input.get("stream_tail_ms", 0)
 
     # Validate speaker_voice if provided
     if speaker_voice:
@@ -389,6 +412,20 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
     if not isinstance(max_chars_per_chunk, int) or max_chars_per_chunk < 50 or max_chars_per_chunk > 1000:
         return None, {"error": "max_chars_per_chunk must be an integer between 50 and 1000"}
 
+    if stream_max_chars_per_chunk is not None:
+        if not isinstance(stream_max_chars_per_chunk, int) or stream_max_chars_per_chunk < 50 or stream_max_chars_per_chunk > 1000:
+            return None, {"error": "stream_max_chars_per_chunk must be an integer between 50 and 1000"}
+
+    if stream_crossfade_ms is not None:
+        if not isinstance(stream_crossfade_ms, int) or stream_crossfade_ms < 0 or stream_crossfade_ms > 2000:
+            return None, {"error": "stream_crossfade_ms must be an integer between 0 and 2000"}
+
+    if not isinstance(stream_tail_ms, int) or stream_tail_ms < 0 or stream_tail_ms > 5000:
+        return None, {"error": "stream_tail_ms must be an integer between 0 and 5000"}
+
+    if output_format != "pcm_16":
+        return None, {"error": "Invalid output_format. Only 'pcm_16' is currently supported"}
+
     params = {
         "text": text,
         "speaker_voice": speaker_voice,
@@ -402,13 +439,18 @@ def extract_and_validate_params(job_input: Dict) -> tuple:
         "max_chars_per_chunk": max_chars_per_chunk,
         "enable_crossfade": enable_crossfade,
         "crossfade_ms": crossfade_ms,
+        "stream": stream,
+        "output_format": output_format,
+        "stream_max_chars_per_chunk": stream_max_chars_per_chunk,
+        "stream_crossfade_ms": stream_crossfade_ms,
+        "stream_tail_ms": stream_tail_ms,
     }
 
     return params, None
 
 
 # =============================================================================
-# HANDLER FUNCTION
+# HANDLER FUNCTIONS
 # =============================================================================
 
 def handler_batch(job_input: Dict) -> Dict:
@@ -515,6 +557,49 @@ def handler_batch(job_input: Dict) -> Dict:
         }
 
 
+def handler_stream(job_input: Dict) -> Generator[Dict, None, None]:
+    """
+    Streaming mode handler - yields base64 PCM chunks as they're generated.
+
+    Args:
+        job_input: Job input dictionary
+
+    Yields:
+        Dictionaries with streaming chunk data
+    """
+    params, error = extract_and_validate_params(job_input)
+    if error:
+        log.error(f"Parameter validation failed: {error}")
+        yield error
+        return
+
+    try:
+        inference_engine = get_inference_engine()
+        yield from inference_engine.generate_audio_stream_decoded(
+            text=params["text"],
+            speaker_voice=params["speaker_voice"],
+            emo_audio_prompt=params["emo_audio_prompt"],
+            emo_vector=params["emo_vector"],
+            emo_alpha=params["emo_alpha"],
+            use_emo_text=params["use_emo_text"],
+            emo_text=params["emo_text"],
+            use_random=params["use_random"],
+            max_chars_per_chunk=params["stream_max_chars_per_chunk"] or params["max_chars_per_chunk"],
+            enable_crossfade=params["enable_crossfade"],
+            crossfade_ms=params["stream_crossfade_ms"] if params["stream_crossfade_ms"] is not None else params["crossfade_ms"],
+            stream_tail_ms=params["stream_tail_ms"],
+        )
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        log.error(f"Streaming mode failed: {str(e)}")
+        log.error(f"Traceback: {error_trace}")
+        yield {
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": error_trace
+        }
+
+
 def handler(job: Dict):
     """
     Main RunPod serverless handler.
@@ -522,8 +607,8 @@ def handler(job: Dict):
     Args:
         job: RunPod job dictionary with 'input' key
 
-    Returns:
-        Result dictionary
+    Yields:
+        Result dictionary(es)
     """
     job_id = job.get('id')
     input_data = job.get('input', {})
@@ -532,13 +617,22 @@ def handler(job: Dict):
 
     # Handle health check
     if input_data.get("action") == "health_check":
-        return health_check()
+        yield health_check()
+        return
+
+    stream = input_data.get("stream", False)
+    output_format = input_data.get("output_format", "pcm_16")
+
+    if stream:
+        log.info(f"[{job_id}] Streaming mode: format={output_format}")
+        yield from handler_stream(input_data)
+        return
 
     # Batch mode - generate and upload
     log.info(f"[{job_id}] Batch mode - input keys: {list(input_data.keys())}")
     result = handler_batch(input_data)
     log.info(f"[{job_id}] Batch mode result status: {result.get('status', result.get('error', 'unknown'))}")
-    return result
+    yield result
 
 
 # =============================================================================
@@ -588,6 +682,7 @@ def main() -> None:
     print("Handler ready to receive requests")
     runpod.serverless.start({
         "handler": handler,
+        "return_aggregate_stream": True,
     })
 
 

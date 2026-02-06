@@ -15,7 +15,7 @@ import re
 import tempfile
 import time
 import logging
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Generator
 from pathlib import Path
 
 import torch
@@ -333,6 +333,165 @@ class IndexTTSInference:
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
+
+    def generate_audio_stream_decoded(
+        self,
+        text: str,
+        speaker_voice: Optional[str] = None,
+        emo_audio_prompt: Optional[str] = None,
+        emo_vector: Optional[List[float]] = None,
+        emo_alpha: float = 1.0,
+        use_emo_text: bool = False,
+        emo_text: Optional[str] = None,
+        use_random: bool = False,
+        max_chars_per_chunk: int = 300,
+        enable_crossfade: bool = True,
+        crossfade_ms: int = 100,
+        stream_tail_ms: int = 0,
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Generate streaming audio chunks as base64-encoded signed int16 PCM."""
+        import base64
+        import traceback
+
+        self._load_model()
+
+        spk_audio_path = self._resolve_voice_path(speaker_voice) if speaker_voice else None
+        emo_audio_path = self._resolve_voice_path(emo_audio_prompt) if emo_audio_prompt else None
+
+        if speaker_voice and spk_audio_path is None:
+            available = [f.stem for f in config.AUDIO_VOICES_DIR.glob("*")
+                         if f.suffix.lower() in config.AUDIO_EXTS]
+            yield {"error": f"Speaker voice '{speaker_voice}' not found. Available: {available}"}
+            return
+
+        try:
+            chunks = chunk_text(text, max_chars=max_chars_per_chunk) if max_chars_per_chunk and max_chars_per_chunk > 0 else [text]
+            if not chunks:
+                yield {"error": "Text is empty after normalization"}
+                return
+
+            output_sample_rate = None
+            buffer_audio = None
+            chunk_num = 0
+            tail_samples = 0
+            crossfade_samples = 0
+
+            for i, chunk_text_content in enumerate(chunks):
+                log.info(f"Streaming chunk {i + 1}/{len(chunks)}")
+
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    tmp_path = tmp_file.name
+
+                try:
+                    self._tts.infer(
+                        spk_audio_prompt=str(spk_audio_path) if spk_audio_path else None,
+                        text=chunk_text_content,
+                        output_path=tmp_path,
+                        emo_audio_prompt=str(emo_audio_path) if emo_audio_path else None,
+                        emo_vector=emo_vector,
+                        emo_alpha=emo_alpha,
+                        use_emo_text=use_emo_text,
+                        emo_text=emo_text,
+                        use_random=use_random,
+                        verbose=False,
+                    )
+
+                    audio_tensor, sr = torchaudio.load(tmp_path)
+
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+
+                chunk_tensor = audio_tensor.to(self.device)
+                if chunk_tensor.dim() > 1:
+                    chunk_tensor = chunk_tensor[0]
+                if chunk_tensor.dim() > 1:
+                    chunk_tensor = chunk_tensor.reshape(-1)
+
+                if output_sample_rate is None:
+                    output_sample_rate = sr
+                    tail_samples = int(output_sample_rate * (float(stream_tail_ms) / 1000.0)) if stream_tail_ms else 0
+                    crossfade_samples = (
+                        int(output_sample_rate * (float(crossfade_ms) / 1000.0))
+                        if crossfade_ms and enable_crossfade
+                        else 0
+                    )
+                    log.info(f"Model output sample rate: {output_sample_rate}")
+                elif sr != output_sample_rate:
+                    chunk_tensor = torchaudio.functional.resample(chunk_tensor.unsqueeze(0), sr, output_sample_rate).squeeze(0)
+
+                if buffer_audio is None:
+                    merged = chunk_tensor
+                else:
+                    if crossfade_samples > 0:
+                        cf = min(crossfade_samples, len(buffer_audio), len(chunk_tensor))
+                        if cf > 0:
+                            fade_out = torch.linspace(1.0, 0.0, cf, device=chunk_tensor.device, dtype=chunk_tensor.dtype)
+                            fade_in = 1.0 - fade_out
+                            blended = buffer_audio[-cf:] * fade_out + chunk_tensor[:cf] * fade_in
+                            merged = torch.cat([buffer_audio[:-cf], blended, chunk_tensor[cf:]], dim=-1)
+                        else:
+                            merged = torch.cat([buffer_audio, chunk_tensor], dim=-1)
+                    else:
+                        merged = torch.cat([buffer_audio, chunk_tensor], dim=-1)
+
+                if tail_samples > 0 and len(merged) > tail_samples:
+                    emit_tensor = merged[:-tail_samples]
+                    buffer_audio = merged[-tail_samples:]
+                else:
+                    emit_tensor = None
+                    buffer_audio = merged
+
+                if emit_tensor is not None and len(emit_tensor) > 0:
+                    audio_array = emit_tensor.detach().cpu().numpy()
+                    if audio_array.dtype == np.float32 or audio_array.dtype == np.float64:
+                        audio_int16 = np.clip(audio_array, -1.0, 1.0)
+                        audio_int16 = (audio_int16 * 32767).astype(np.int16)
+                    else:
+                        audio_int16 = audio_array.astype(np.int16)
+
+                    chunk_num += 1
+                    yield {
+                        "status": "streaming",
+                        "chunk": chunk_num,
+                        "format": "pcm_16",
+                        "audio_chunk": base64.b64encode(audio_int16.tobytes()).decode("utf-8"),
+                        "sample_rate": output_sample_rate,
+                    }
+
+            if buffer_audio is not None and len(buffer_audio) > 0:
+                audio_array = buffer_audio.detach().cpu().numpy()
+                if audio_array.dtype == np.float32 or audio_array.dtype == np.float64:
+                    audio_int16 = np.clip(audio_array, -1.0, 1.0)
+                    audio_int16 = (audio_int16 * 32767).astype(np.int16)
+                else:
+                    audio_int16 = audio_array.astype(np.int16)
+
+                chunk_num += 1
+                yield {
+                    "status": "streaming",
+                    "chunk": chunk_num,
+                    "format": "pcm_16",
+                    "audio_chunk": base64.b64encode(audio_int16.tobytes()).decode("utf-8"),
+                    "sample_rate": output_sample_rate or config.DEFAULT_SAMPLE_RATE,
+                }
+
+            yield {
+                "status": "complete",
+                "format": "pcm_16",
+                "message": "All chunks streamed",
+                "total_chunks": chunk_num,
+            }
+
+        except Exception as e:
+            error_trace = traceback.format_exc()
+            log.error(f"Streaming mode failed: {str(e)}")
+            log.error(f"Traceback: {error_trace}")
+            yield {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "traceback": error_trace
+            }
 
     def cleanup(self):
         """Clean up model and free memory."""
