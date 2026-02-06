@@ -90,7 +90,7 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
         pyyaml tqdm "transformers==4.46.3" accelerate \
         "numba>=0.59" "llvmlite>=0.42" \
         librosa soundfile pysoundfile \
-        whisper-timestamped omegaconf
+        whisper-timestamped omegaconf json5
 
     log "Installing RunPod and serverless dependencies..."
     pip install --no-cache-dir \
@@ -115,7 +115,7 @@ else
         omegaconf \
         "numba>=0.59" "llvmlite>=0.42" \
         "transformers==4.46.3" \
-        whisper-timestamped 2>/dev/null || true
+        whisper-timestamped json5 2>/dev/null || true
 fi
 
 # Make sure the source is importable
