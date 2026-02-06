@@ -108,6 +108,13 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
 else
     log "Activating existing virtual environment at $VENV_DIR"
     source "$VENV_DIR/bin/activate"
+
+    # Patch: ensure any newly added deps are installed (fast no-op if already present)
+    log "Checking for missing dependencies..."
+    pip install --no-cache-dir -q \
+        omegaconf \
+        "numba>=0.59" "llvmlite>=0.42" \
+        whisper-timestamped 2>/dev/null || true
 fi
 
 # Make sure the source is importable
