@@ -122,8 +122,8 @@ if [ ! -f "$VENV_DIR/bin/activate" ]; then
         tqdm \
         boto3
 
-    log "Installing HuggingFace CLI..."
-    pip install --no-cache-dir "huggingface-hub[cli,hf_xet]"
+    log "Installing HuggingFace CLI and hf_transfer..."
+    pip install --no-cache-dir "huggingface-hub[cli,hf_xet]" hf_transfer
 
     log "=== Virtual environment setup complete ==="
 else
@@ -140,7 +140,7 @@ else
         "munch==4.0.0" "textstat>=0.7.10" \
         "ffmpeg-python==0.2.0" "descript-audiotools==0.7.2" \
         "WeTextProcessing" \
-        whisper-timestamped 2>/dev/null || true
+        whisper-timestamped hf_transfer 2>/dev/null || true
 fi
 
 # Make sure the source is importable
