@@ -62,7 +62,7 @@ cp "$DOCKER_SRC/config.py" "$SRC_DIR/"
 cp "$DOCKER_SRC/serverless_engine.py" "$SRC_DIR/"
 
 # Create Python virtual environment and install dependencies (first time only)
-if [ ! -d "$VENV_DIR/bin/activate" ]; then
+if [ ! -f "$VENV_DIR/bin/activate" ]; then
     log "=== First-time setup: creating virtual environment ==="
     python -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
@@ -90,7 +90,7 @@ if [ ! -d "$VENV_DIR/bin/activate" ]; then
         pyyaml tqdm transformers accelerate \
         "numba>=0.59" "llvmlite>=0.42" \
         librosa soundfile pysoundfile \
-        whisper-timestamped
+        whisper-timestamped omegaconf
 
     log "Installing RunPod and serverless dependencies..."
     pip install --no-cache-dir \
