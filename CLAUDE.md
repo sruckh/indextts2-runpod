@@ -146,3 +146,24 @@ IndexTTS source is cloned to the network volume on first boot by bootstrap.sh:
 - Path traversal protection on audio file inputs
 - Old output files auto-deleted after 2 days (`CLEANUP_DAYS`)
 - Model is NOT thread-safe - uses global singleton
+
+# 🛑 STOP — Run codemap before ANY task
+
+```bash
+codemap .                     # Project structure
+codemap --deps                # How files connect
+codemap --diff                # What changed vs main
+codemap --diff --ref <branch> # Changes vs specific branch
+```
+## Pro Workflow
+
+### Self-Correction
+When corrected, propose rule → add to LEARNED after approval.
+
+### Planning
+Multi-file: plan first, wait for "proceed".
+
+### Quality
+After edits: lint, typecheck, test.
+
+### LEARNED
